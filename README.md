@@ -1,7 +1,7 @@
 # MedEvi-NS @ ArchEHR-QA 2026 Task 4    
 
 This repository represent a code for paper [MedEvi-NS at ArchEHR-QA 2026: Using clinical reasoning
-principles to improve zero-shot capabilities of Large Language Models in Evidence Alignment]().
+principles to improve zero-shot capabilities of Large Language Models in Evidence Alignment]() @ [LREC 2026](https://www.elra.info/lrec2026/).
 The task aims at citing suporting sentences from patient excerpt notes to each sentence from answers to patient question.
 
 This is an implementation of the  prompt-engineering methodology that features **clinical-reasoning principles** (See figure below) in related alignment. 
