@@ -2,20 +2,42 @@
 
 import argparse
 import json
-import sys
+import re
 from pathlib import Path
-from typing import Dict, Mapping, Set
+from typing import Any, Dict, List, Mapping, Set
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from utils_data import parse_grounded_answer
+from submission.utils_parse import parse_grounded_answer
 
 
-def load_key_links(key_path: Path, positive_labels: Set[str]) -> Dict[int, Set[int]]:
+def _citations_str_to_set(citations_str: str) -> Set[int]:
+    """Parse citations string (e.g. '2', '2,5', '19-25') into set of ints."""
+    if not citations_str or not str(citations_str).strip():
+        return set()
+    out: Set[int] = set()
+    for part in str(citations_str).strip().split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            m = re.match(r"^(\d+)\s*-\s*(\d+)$", part)
+            if m:
+                lo, hi = int(m.group(1)), int(m.group(2))
+                if lo <= hi:
+                    out.update(range(lo, hi + 1))
+        elif part.isdigit():
+            out.add(int(part))
+    return out
 
+
+def load_key_sentence_links(key_path: Path) -> Dict[int, List[Set[int]]]:
+    """
+    Load gold citation sets per answer sentence from archehr-qa_key.json.
+    Returns case_id -> list of sets, one set per clinician_answer_sentences item (citations field).
+    """
     with open(key_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    gold: Dict[int, Set[int]] = {}
+    gold: Dict[int, List[Set[int]]] = {}
     for item in data:
         cid_raw = item.get("case_id")
         if cid_raw is None:
@@ -25,39 +47,20 @@ def load_key_links(key_path: Path, positive_labels: Set[str]) -> Dict[int, Set[i
         except (TypeError, ValueError):
             continue
 
-        links: Set[int] = set()
-        for ans in item.get("answers", []):
-            sid_raw = ans.get("sentence_id")
-            rel = ans.get("relevance")
-            if rel not in positive_labels or sid_raw is None:
+        sentence_links: List[Set[int]] = []
+        for sent in item.get("clinician_answer_sentences") or []:
+            if not isinstance(sent, dict):
                 continue
-            try:
-                sid = int(sid_raw)
-            except (TypeError, ValueError):
-                continue
-            links.add(sid)
-
-        gold[cid] = links
+            raw = sent.get("citations")
+            sentence_links.append(_citations_str_to_set(str(raw) if raw is not None else ""))
+        if sentence_links:
+            gold[cid] = sentence_links
 
     return gold
 
 
-def load_pred_links(pred_path: Path) -> Dict[int, Set[int]]:
-    """
-    Load predicted alignments from the JSONL produced by solution.py.
-
-    Expected structure per line:
-    {
-      "case_id": 21,
-      ...,
-      "grounded_entries": [
-        {"sentence": "...", "evidence_id": ["4"]},
-        {"sentence": "...", "evidence_id": ["5", "11"]},
-        ...
-      ]
-    }
-    """
-    preds: Dict[int, Set[int]] = {}
+def load_pred_sentence_links(pred_path: Path) -> Dict[int, List[Set[int]]]:
+    preds: Dict[int, List[Set[int]]] = {}
     with open(pred_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -72,22 +75,17 @@ def load_pred_links(pred_path: Path) -> Dict[int, Set[int]]:
             except (TypeError, ValueError):
                 continue
 
-            links: Set[int] = set()
-
-            # TODO. apply 
-            grounded_entries = parse_grounded_answer(record.get("grounded_answer"))
-
-            for entry in grounded_entries:
+            sentence_links: List[Set[int]] = []
+            for entry in parse_grounded_answer(record.get("grounded_answer")):
                 ids = entry.get("evidence_id") or []
+                s: Set[int] = set()
                 for sid_raw in ids:
                     try:
-                        # evidence ids are usually strings like "4"
-                        sid = int(str(sid_raw).strip())
+                        s.add(int(str(sid_raw).strip()))
                     except (TypeError, ValueError):
                         continue
-                    links.add(sid)
-
-            preds[cid] = links
+                sentence_links.append(s)
+            preds[cid] = sentence_links
 
     return preds
 
@@ -101,52 +99,95 @@ def safe_prf(tp: int, fp: int, fn: int) -> Dict[str, float]:
 
 
 def evaluate(
-    gold: Mapping[int, Set[int]],
-    preds: Mapping[int, Set[int]],
-) -> None:
+    gold: Mapping[int, List[Set[int]]],
+    preds: Mapping[int, List[Set[int]]],
+) -> Dict[str, Any]:
     case_ids = sorted(set(gold.keys()) & set(preds.keys()))
     if not case_ids:
-        print("No overlapping case_ids between gold and predictions.")
-        return
+        return {
+            "n_cases": 0,
+            "case_scores": [],
+            "micro": {"precision": 0.0, "recall": 0.0, "f1": 0.0},
+            "macro": {"precision": 0.0, "recall": 0.0, "f1": 0.0},
+            "message": "No overlapping case_ids between gold and predictions.",
+        }
 
+    case_scores: List[Dict[str, Any]] = []
     micro_tp = micro_fp = micro_fn = 0
-    macro_p = macro_r = macro_f1 = 0.0
-
-    print(f"Evaluating {len(case_ids)} cases...")
+    all_sentence_f1: List[float] = []
 
     for cid in case_ids:
-        g = gold.get(cid, set())
-        p = preds.get(cid, set())
+        gold_sents = gold.get(cid, [])
+        pred_sents = preds.get(cid, [])
+        n_sent = min(len(gold_sents), len(pred_sents))
+        if n_sent == 0:
+            case_scores.append({"case_id": cid, "precision": 0.0, "recall": 0.0, "f1": 0.0})
+            continue
 
-        tp = len(g & p)
-        fp = len(p - g)
-        fn = len(g - p)
+        case_tp = case_fp = case_fn = 0
+        case_f1s: List[float] = []
 
-        micro_tp += tp
-        micro_fp += fp
-        micro_fn += fn
+        for j in range(n_sent):
+            g = gold_sents[j]
+            p = pred_sents[j]
+            tp = len(g & p)
+            fp = len(p - g)
+            fn = len(g - p)
+            case_tp += tp
+            case_fp += fp
+            case_fn += fn
+            micro_tp += tp
+            micro_fp += fp
+            micro_fn += fn
+            scores = safe_prf(tp, fp, fn)
+            case_f1s.append(scores["f1"])
+            all_sentence_f1.append(scores["f1"])
 
-        scores = safe_prf(tp, fp, fn)
-
-        print (f"Case {cid}: {scores}")
-        macro_p += scores["precision"]
-        macro_r += scores["recall"]
-        macro_f1 += scores["f1"]
+        case_prf = safe_prf(case_tp, case_fp, case_fn)
+        case_scores.append({"case_id": cid, **case_prf})
 
     micro = safe_prf(micro_tp, micro_fp, micro_fn)
-    n = len(case_ids)
+    n_cases = len(case_ids)
+    macro_f1 = sum(all_sentence_f1) / len(all_sentence_f1) if all_sentence_f1 else 0.0
+    macro_p = sum(s["precision"] for s in case_scores) / n_cases if case_scores else 0.0
+    macro_r = sum(s["recall"] for s in case_scores) / n_cases if case_scores else 0.0
     macro = {
-        "precision": macro_p / n,
-        "recall": macro_r / n,
-        "f1": macro_f1 / n,
+        "precision": macro_p,
+        "recall": macro_r,
+        "f1": macro_f1,
     }
 
-    print("\nMicro-averaged scores (over all links):")
+    return {
+        "n_cases": n_cases,
+        "case_scores": case_scores,
+        "micro": micro,
+        "macro": macro,
+        "message": None,
+    }
+
+
+def print_evaluate_result(result: Dict[str, Any]) -> None:
+    """Print the result returned by evaluate()."""
+    if result.get("message"):
+        print(result["message"])
+        return
+
+    n = result["n_cases"]
+    print(f"Evaluating {n} cases...")
+
+    for item in result["case_scores"]:
+        cid = item["case_id"]
+        scores = {k: item[k] for k in ("precision", "recall", "f1")}
+        print(f"Case {cid}: {scores}")
+
+    micro = result["micro"]
+    print("\nMicro-averaged scores (over all links, all sentences):")
     print(f"  Precision: {micro['precision']:.4f}")
     print(f"  Recall:    {micro['recall']:.4f}")
     print(f"  F1:        {micro['f1']:.4f}")
 
-    print("\nMacro-averaged scores (mean over cases):")
+    macro = result["macro"]
+    print("\nMacro-averaged scores (mean over answer sentences):")
     print(f"  Precision: {macro['precision']:.4f}")
     print(f"  Recall:    {macro['recall']:.4f}")
     print(f"  F1:        {macro['f1']:.4f}")
@@ -162,15 +203,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         required=True,
         help="Path to archehr-qa_key.json (dev/test key).",
-    )
-    parser.add_argument(
-        "--positive_labels",
-        type=str,
-        default="essential,supplementary",
-        help=(
-            "Comma-separated relevance labels to treat as positive "
-            '(default: "essential,supplementary").'
-        ),
     )
     return parser.parse_args()
 
@@ -188,12 +220,11 @@ def main() -> None:
     if not key_path.is_absolute():
         key_path = project_root / key_path
 
-    positive_labels = {s.strip() for s in args.positive_labels.split(",") if s.strip()}
+    gold = load_key_sentence_links(key_path)
+    preds = load_pred_sentence_links(pred_path)
+    result = evaluate(gold, preds)
 
-    gold = load_key_links(key_path, positive_labels)
-    preds = load_pred_links(pred_path)
-
-    evaluate(gold, preds)
+    print_evaluate_result(result)
 
 
 if __name__ == "__main__":
