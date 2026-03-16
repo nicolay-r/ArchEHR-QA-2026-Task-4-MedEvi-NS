@@ -1,3 +1,4 @@
 tqdm
 replicate
+openai==1.56.0
 bulk_chain @ git+https://github.com/nicolay-r/bulk-chain@1.2.0
