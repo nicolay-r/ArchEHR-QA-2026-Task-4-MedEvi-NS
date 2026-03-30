@@ -1,5 +1,7 @@
 # MedEvi-NS @ ArchEHR-QA 2026 Task 4    
 
+### [📊 ArchEHR-QA 2026 Task 4 Competition](https://www.codabench.org/competitions/13528/)
+
 This repository represent a code for paper [MedEvi-NS at ArchEHR-QA 2026: Using clinical reasoning
 principles to improve zero-shot capabilities of Large Language Models in Evidence Alignment]() @ [LREC 2026](https://www.elra.info/lrec2026/).
 The task aims at citing suporting sentences from patient excerpt notes to each sentence from answers to patient question.
