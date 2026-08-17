@@ -64,4 +64,18 @@ https://physionet.org/content/archehr-qa-bionlp-task-2025/1.3/
 
 # Reference
 
-> TODO.
+```
+@inproceedings{sun-etal-2026-medevi,
+  title = {MedEvi-NS at ArchEHR-QA 2026: Using Clinical Reasoning Principles to Improve Zero-shot Capabilities of Large Language Models in Evidence Alignment },
+  author = {Sun, Mengxuan and Rusnachenko, Nicolay},
+  booktitle = {Proceedings of the Third Workshop on Patient-Oriented Language Processing (CL4Health) @ LREC 2026},
+  month = {May},
+  year = {2026},
+  pages = {482--486},
+  address = {Palma, Mallorca, Spain},
+  publisher = {European Language Resources Association (ELRA)},
+  editor = {Gupta, Deepak and Thompson, Paul and Ananiadou, Sophia and Demner-Fushman, Dina},
+  doi = {10.63317/2uoe94adhkng},
+  abstract = {The ArchEHR-QA shared task focuses on grounded question answering using patient EHR data. For the given clinical interpretation of the patient question, note excerpt (E) and answer text (A), subtask 4 (evidence alignment) aims to cite supporting sentences from E for each sentence in A. In this paper, we propose a prompt-engineering methodology that features clinical-reasoning principles in related alignment. We adopt this methodology for GPT-5.2 in zero-shot learning mode. According to our experiments on ArchEHR-QA, incorporating clinical reasoning principles into the prompt improves F 1overall by +2.0%. Our final submission resulted in 77.4% by F 1overall, which positions us at 10th out of 16 teams. Our code is publicly available: https://github.com/nicolay-r/ArchEHR-QA-2026-Task-4-MedEvi-NS}
+}
+```
